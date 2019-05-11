@@ -1,0 +1,178 @@
+---
+title: "Лабораторная №7"
+output:
+  html_document:
+    df_print: paged
+---
+
+Практика 7
+Нелинейные модели
+Данные: Boston {MASS}
+Работаем со столбцами:
+* crim – уровень преступности на душу населения по городам;
+* dis –средневзвешенное расстояние до пяти бостонских центров занятости.
+Полиномиальная регрессия.
+```{r first}
+
+library('MASS')              # набор данных Boston
+library('splines')           # сплайны
+library('gam')               # обобщённые аддитивные модели
+library('akima')             # график двумерной плоскости
+library('ggplot2') 
+my.seed <- 1
+attach(Boston)
+fix(Boston)
+names(Boston)
+?Boston
+#Подгоняем полином четвёртой степени для зависимости crim от dis.
+fit <- lm(crim ~ poly(dis, 4), data = Boston)
+round(coef(summary(fit)), 2)
+#Функция poly(dis, 4) создаёт таблицу с базисом ортогональных полиномов: линейные комбинации значений переменной dis в степенях от 1 до 4.
+round(head(poly(dis, 4)), 3)
+# можно получить сами значения dis в заданных степенях
+round(head(poly(dis, 4, raw = T)), 3)
+# на прогноз не повлияет, но оценки параметров изменяются
+fit.2 <- lm(crim ~ poly(dis, 4, raw = T), data = Boston)
+round(coef(summary(fit.2)), 2)
+# границы изменения переменной dis
+dislims <- range(dis)
+
+# значения dis, для которых делаем прогноз (от min до max с шагом 1)
+dis.grid <- seq(from = dislims[1], to = dislims[2])
+
+# рассчитать прогнозы и их стандартные ошибки
+preds <- predict(fit, newdata = list(dis = dis.grid), se = T)
+
+# границы доверительного интервала для заработной платы
+se.bands <- cbind(lower.bound = preds$fit - 2*preds$se.fit,
+                  upper.bound = preds$fit + 2*preds$se.fit)
+
+# смотрим результат
+round(head(se.bands), 2)
+# наблюдения
+plot(dis, crim, xlim = dislims, cex = 0.5, col = 'darkgrey') +
+  title('Полином четвёртой степени') +
+  lines(dis.grid, preds$fit , lwd = 2, col = 'blue') +
+  matlines(dis.grid, se.bands, lwd = 1, col = 'blue', lty = 3)
+# прогнозы по второму вызову модели
+preds2 <- predict(fit.2, newdata = list(dis = dis.grid), se = T)
+# максимальное расхождение между прогнозами по двум вариантам вызова модели
+max(abs(preds$fit - preds2$fit))
+#Теперь подбираем степень полинома, сравнивая модели со степенями от 1 до 5 с помощью дисперсионного анализа (ANOVA).
+fit.1 <- lm(crim ~ dis, data = Boston)
+fit.2 <- lm(crim ~ poly(dis, 2), data = Boston)
+fit.3 <- lm(crim ~ poly(dis, 3), data = Boston)
+fit.4 <- lm(crim ~ poly(dis, 4), data = Boston)
+fit.5 <- lm(crim ~ poly(dis, 5), data = Boston)
+round(anova(fit.1, fit.2, fit.3, fit.4, fit.5), 2)
+```
+
+Рассматриваются пять моделей, в которых степени полинома от dis идут по возрастанию. В крайнем правом столбце таблице приводятся p-значения для проверки нулевой гипотезы: текущая модель не даёт статистически значимого сокращения RSS по сравнению с предыдущей моделью. Можно сделать вывод, что степени 4 достаточно, дальнейшее увеличение степени не даёт значимого улучшения качества модели.
+
+Ступенчатые функции
+
+Для начала определим несколько интервалов, на каждом из которых будем моделировать зависимость crim от dis своим средним уровнем.
+```{r second}
+# Ступенчатые функции
+# нарезаем предиктор crim на 4 равных интервала
+table(cut(dis, 4))
+# подгоняем линейную модель на интервалах
+fit <- lm(crim ~ cut(dis, 4), data = Boston)
+round(coef(summary(fit)), 2)
+
+# границы изменения переменной dis
+dislims <- range(dis)
+
+# значения dis, для которых делаем прогноз (от min до max с шагом 1)
+dis.grid <- seq(dislims[1],dislims[2], length = 200)
+
+# прогноз -- это средние по `crim` на каждом интервале
+preds.cut <- predict(fit, newdata = list(dis = dis.grid), se = T)
+
+# интервальный прогноз
+se.bands.cut <- cbind(lower.bound = preds.cut$fit - 2*preds.cut$se.fit,
+                      upper.bound = preds.cut$fit + 2*preds.cut$se.fit)
+
+# наблюдения
+plot(dis, crim, xlim = dislims, cex = 0.5, col = 'darkgrey')
+
+# модель
+lines(dis.grid, preds.cut$fit, lwd = 2, col = 'darkgreen')
+
+# доверительные интервалы прогноза
+matlines(x = dis.grid, y = se.bands.cut, lwd = 1, col = 'darkgreen', 
+         lty = 3)
+
+# заголовок
+title('Ступенчатая функция')
+fit <- glm(I(crim > 30) ~ cut(dis, 4), data = Boston,
+           family = 'binomial')
+
+# прогнозы
+preds <- predict(fit, newdata = list(dis = dis.grid), se = T)
+
+# пересчитываем доверительные интервалы и прогнозы в исходные ЕИ
+pfit <- exp(preds$fit) / (1 + exp(preds$fit))
+se.bands.logit <- cbind(lower.bound = preds$fit - 2*preds$se.fit,
+                        upper.bound = preds$fit + 2*preds$se.fit)
+se.bands <- exp(se.bands.logit)/(1 + exp(se.bands.logit))
+
+# результат - доверительный интервал для вероятности события 
+#   "Уровень преступности выше 30".   
+round(head(se.bands), 3)
+
+
+# сетка для графика (изображаем вероятности, поэтому интервал изменения y мал)
+plot(dis, I(crim > 30), xlim = dislims, type = 'n', ylim = c(0, 0.2),
+     ylab = 'P(crim > 30 | dis)')
+
+# фактические наблюдения показываем засечками
+points(jitter(dis), I((crim > 30) / 5), cex = 0.5, pch = '|', col = 'darkgrey')
+
+# модель
+lines(dis.grid, pfit, lwd = 2, col = 'darkgreen')
+
+# доверительные интервалы
+matlines(dis.grid, se.bands, lwd = 1, col = 'darkgreen', lty = 3)
+
+# заголовок
+title('Ступенчатая функция')
+```
+
+
+Обобщённые аддитивные модели (GAM) с непрерывным откликом
+
+Построим GAM на натуральных сплайнах степеней 4 (indus), 5 (dis) с категориальным предиктором chas.
+```{r third}
+# GAM на натуральных сплайнах
+gam.ns <- gam(crim ~ ns(indus, 4) + ns(dis, 5) + chas, data = Boston)
+# GAM на сглаживающих сплайнах
+gam.m3 <- gam(crim ~ s(indus, 4) + s(dis, 5) + chas, data = Boston)
+par(mfrow = c(1, 3))
+plot(gam.m3, se = T, col = 'blue')
+par(mfrow = c(1, 1))
+par(mfrow = c(1, 3))
+plot(gam.ns, se = T, col = 'red')
+par(mfrow = c(1, 1))
+#Сделаем ANOVA, чтобы понять, какая степень для chas лучше.
+gam.m1 <- gam(crim ~ s(dis, 5) + chas, data = Boston)          
+gam.m2 <- gam(crim ~ indus + s(dis, 5) + chas, data = Boston)   
+anova(gam.m1, gam.m2, gam.m3, test = 'F')
+#Третья модель статистически лучше второй.
+# сводка по модели gam.m3
+summary(gam.m3)
+preds <- predict(gam.m3, newdata = Boston)
+# GAM на локальных регрессиях
+gam.lo <- gam(crim ~ s(indus, df = 4) + lo(dis, span = 0.7) + chas, 
+              data = Boston)
+par(mfrow = c(1, 3))
+plot(gam.lo, se = T, col = 'green')
+par(mfrow = c(1, 1))
+# модель со взаимодействием регрессоров indus и dis
+gam.lo.i <- gam(crim ~ lo(indus, dis, span = 0.5) + chas, data = Boston)
+par(mfrow = c(1, 2))
+plot(gam.lo.i)
+```
+
+
+
